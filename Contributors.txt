@@ -1,0 +1,17 @@
+CONTRIBUTORS
+Multiplayer Game Communication Network
+
+1. Name: Akanksha Rajiv
+   SRN: PES1UG25CS042
+   Email: akanksha.rajiv@gmail.com
+   Github ID: akanksharajiv
+
+2. Name: Aditi Saraf
+   SRN: PES1UG25CS031
+   Email: aditi.saraf23@gmail.com
+   Github ID: aditisaraf23
+
+3. Name: Adithya S Maiya
+   SRN: PES1UG25CS026
+   Email: adithyasmaiya@gmail.com
+   Github ID: adithyasmaiya
