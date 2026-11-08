@@ -24,7 +24,7 @@ import time
 ROOT = Path(__file__).resolve().parent
 CONTROLLER_FILE = ROOT / "game_sdn_controller.py"
 SENDER_FILE = ROOT / "sender_mininet.py"
-RECEIVER_FILE = ROOT / "receiver.py"
+RECEIVER_FILE = ROOT / "receiver_new.py"
 RYU = ROOT / ".venv-ryu" / "bin" / "ryu-manager"
 CONTROLLER_ADDRESS = ("127.0.0.1", 6653)
 GAME_SECONDS = 12
@@ -39,7 +39,7 @@ def command(args, *, check=True):
     return subprocess.run(args, text=True, capture_output=True, check=check)
 
 
-def check_prerequisites() -> None:
+def check_prerequisites(*, require_iperf3: bool = False) -> None:
     if os.geteuid() != 0:
         raise RuntimeError("Launch with sudo: sudo python3 launch_project.py")
     for f in (CONTROLLER_FILE, SENDER_FILE, RECEIVER_FILE, RYU):
@@ -48,6 +48,12 @@ def check_prerequisites() -> None:
     for exe in ("ovs-vsctl", "ovs-ofctl", "timeout"):
         if shutil.which(exe) is None:
             raise RuntimeError(f"Missing system command: {exe}")
+    if require_iperf3 and shutil.which("iperf3") is None:
+        raise RuntimeError("Missing system command: iperf3. Install it with: sudo apt install iperf3")
+    try:
+        import mininet  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError("Mininet Python package is unavailable to this Python interpreter. Install Mininet and run with its system Python.") from exc
     bridge = command(["ovs-vsctl", "br-exists", "s1"], check=False)
     if bridge.returncode == 0:
         raise RuntimeError(
@@ -75,43 +81,24 @@ def fresh_run_folder() -> Path:
 
 
 def prepare_integrated_controller(folder: Path) -> Path:
-    """Make a run-local copy correcting the broad priority-10 MAC catch-all.
+    """Create a run-local copy of the protocol-aware D1 controller.
 
-    The teammate's original file is NEVER edited. Without this narrowing,
-    ordinary IP forwarding flows may swallow later UDP game packets before
-    the controller can classify them at priority 200.
+    The original controller now contains the same corrected match, so direct
+    topology.py execution and this launcher follow identical forwarding logic.
+    The source is copied unchanged for traceable run evidence.
     """
     original = CONTROLLER_FILE.read_text(encoding="utf-8")
-    old = '''                match = parser.OFPMatch(
-                    in_port=in_port,
-                    eth_dst=eth.dst,
-                )
-                actions = [parser.OFPActionOutput(out_port)]'''
-    new = '''                # Scope ordinary forwarding to its protocol. A broad
-                # (in_port, eth_dst) rule can hide subsequent game UDP flows.
-                fields = dict(
-                    in_port=in_port,
-                    eth_dst=eth.dst,
-                    eth_type=eth.ethertype,
-                )
-                if ip_pkt is not None:
-                    fields["ip_proto"] = ip_pkt.proto
-                    if udp_pkt is not None:
-                        fields["udp_src"] = udp_pkt.src_port
-                        fields["udp_dst"] = udp_pkt.dst_port
-                match = parser.OFPMatch(**fields)
-                actions = [parser.OFPActionOutput(out_port)]'''
-    if original.count(old) != 1:
+    if "fields = {" not in original or 'fields["ip_proto"] = ip_pkt.proto' not in original:
         raise RuntimeError(
-            "Your controller code differs from the reviewed version. No patch applied. "
-            "Please inspect game_sdn_controller.py before using this launcher."
+            "game_sdn_controller.py is missing the protocol-aware forwarding fix. "
+            "Restore the corrected project controller before launching."
         )
     result = folder / "game_sdn_controller_integrated.py"
-    result.write_text(original.replace(old, new, 1), encoding="utf-8")
+    result.write_text(original, encoding="utf-8")
     return result
 
 
-def start_controller(controller_file: Path, folder: Path):
+def start_controller(controller_file: Path, folder: Path, *, extra_env=None):
     log = (folder / "controller.log").open("w", encoding="utf-8")
 
     def drop_privileges():
@@ -124,9 +111,12 @@ def start_controller(controller_file: Path, folder: Path):
 
     # Controller uses a separate Python 3.11 venv, while Mininet uses the
     # distribution's Python 3.14. Both were already installed by the user.
+    controller_env = os.environ.copy()
+    if extra_env:
+        controller_env.update({str(key): str(value) for key, value in extra_env.items()})
     process = subprocess.Popen(
         [str(RYU), "--ofp-tcp-listen-port", "6653", str(controller_file)],
-        cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
+        cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT, env=controller_env,
         preexec_fn=drop_privileges,
     )
     log.close()
