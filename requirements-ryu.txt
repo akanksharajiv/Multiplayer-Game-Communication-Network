@@ -1,2 +1,0 @@
-# Install inside .venv-ryu, not into the system Python used by Mininet.
-ryu==4.34
